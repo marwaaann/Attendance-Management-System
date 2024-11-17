@@ -1,0 +1,225 @@
+import javafx.application.Application;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.Scene;
+import javafx.scene.control.*;
+import javafx.scene.control.cell.PropertyValueFactory;
+import javafx.scene.layout.*;
+import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
+import javafx.scene.text.FontWeight;
+import javafx.stage.Stage;
+
+import java.sql.*;
+
+public class AttendanceManagementSystem extends Application {
+    private Connection connection;
+    private TextField idField, nameField;
+    private TableView<Student> tableView;
+
+    public static void main(String[] args) {
+        launch(args);
+    }
+
+    @Override
+    public void start(Stage primaryStage) {
+        connectDatabase();
+
+        primaryStage.setTitle("Attendance Management System");
+
+        // Title Label
+        Label titleLabel = new Label("Attendance Management System");
+        titleLabel.setFont(Font.font("Arial", FontWeight.BOLD, 20));
+        titleLabel.setTextFill(Color.DARKBLUE);
+        titleLabel.setPadding(new Insets(10, 0, 10, 0));
+
+        // Input Fields
+        idField = new TextField();
+        idField.setPromptText("Student ID");
+        idField.setPrefWidth(120);
+
+        nameField = new TextField();
+        nameField.setPromptText("Student Name");
+        nameField.setPrefWidth(180);
+
+        // Buttons with colors
+        Button addButton = new Button("Add Student");
+        styleButton(addButton, Color.LIGHTGREEN, Color.DARKGREEN);
+        addButton.setOnAction(e -> addStudent());
+
+        Button markPresentButton = new Button("Mark Present");
+        styleButton(markPresentButton, Color.LIGHTBLUE, Color.DARKBLUE);
+        markPresentButton.setOnAction(e -> markAttendance(true));
+
+        Button markAbsentButton = new Button("Mark Absent");
+        styleButton(markAbsentButton, Color.PINK, Color.DARKRED);
+        markAbsentButton.setOnAction(e -> markAttendance(false));
+
+        // Button container
+        HBox inputBox = new HBox(10, idField, nameField, addButton, markPresentButton, markAbsentButton);
+        inputBox.setAlignment(Pos.CENTER);
+        inputBox.setPadding(new Insets(10));
+        inputBox.setBorder(new Border(new BorderStroke(Color.GRAY, BorderStrokeStyle.SOLID, new CornerRadii(5), BorderWidths.DEFAULT)));
+        inputBox.setBackground(new Background(new BackgroundFill(Color.LIGHTGRAY, CornerRadii.EMPTY, Insets.EMPTY)));
+
+        // Table View
+        tableView = new TableView<>();
+        TableColumn<Student, Integer> idColumn = new TableColumn<>("ID");
+        idColumn.setCellValueFactory(new PropertyValueFactory<>("id"));
+        idColumn.setPrefWidth(100);
+
+        TableColumn<Student, String> nameColumn = new TableColumn<>("Name");
+        nameColumn.setCellValueFactory(new PropertyValueFactory<>("name"));
+        nameColumn.setPrefWidth(200);
+
+        // Attendance Status Column
+        TableColumn<Student, String> statusColumn = new TableColumn<>("Attendance Status");
+        statusColumn.setCellValueFactory(new PropertyValueFactory<>("status"));
+        statusColumn.setPrefWidth(150);
+
+        tableView.getColumns().addAll(idColumn, nameColumn, statusColumn);
+        loadStudents();
+
+        VBox layout = new VBox(20, titleLabel, inputBox, tableView);
+        layout.setPadding(new Insets(20));
+        layout.setAlignment(Pos.TOP_CENTER);
+        layout.setBackground(new Background(new BackgroundFill(Color.BEIGE, CornerRadii.EMPTY, Insets.EMPTY)));
+
+        Scene scene = new Scene(layout, 600, 450);
+        primaryStage.setScene(scene);
+        primaryStage.show();
+
+        primaryStage.setOnCloseRequest(e -> closeDatabase());
+    }
+
+    private void styleButton(Button button, Color backgroundColor, Color textColor) {
+        button.setFont(Font.font("Arial", FontWeight.BOLD, 12));
+        button.setTextFill(textColor);
+        button.setBackground(new Background(new BackgroundFill(backgroundColor, new CornerRadii(5), Insets.EMPTY)));
+        button.setPadding(new Insets(5, 15, 5, 15));
+    }
+
+    private void connectDatabase() {
+        String url = "jdbc:mysql://localhost:3306/attendance"; // Database URL
+        String user = "root";  // Replace with your MySQL username
+        String password = "marwan";  // Replace with your MySQL password
+
+        try {
+            connection = DriverManager.getConnection(url,user,password);
+            Statement stmt = connection.createStatement();
+            stmt.execute("CREATE TABLE IF NOT EXISTS Student (id INTEGER PRIMARY KEY, name TEXT)");
+            stmt.execute("CREATE TABLE IF NOT EXISTS Attendance (id INTEGER, date TEXT, status TEXT, FOREIGN KEY(id) REFERENCES Student(id))");
+            stmt.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void loadStudents() {
+        tableView.getItems().clear();
+        try {
+            Statement stmt = connection.createStatement();
+            ResultSet rs = stmt.executeQuery("SELECT Student.id, Student.name, COALESCE(Attendance.status, 'N/A') AS status " +
+                    "FROM Student LEFT JOIN Attendance ON Student.id = Attendance.id " +
+                    "AND Attendance.date = CURDATE() ORDER BY Attendance.date DESC");
+            while (rs.next()) {
+                Student student = new Student(rs.getInt("id"), rs.getString("name"), rs.getString("status"));
+                tableView.getItems().add(student);
+            }
+            rs.close();
+            stmt.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void addStudent() {
+        try {
+            int id = Integer.parseInt(idField.getText());
+            String name = nameField.getText();
+            PreparedStatement pstmt = connection.prepareStatement("INSERT INTO Student (id, name) VALUES (?, ?)");
+            pstmt.setInt(1, id);
+            pstmt.setString(2, name);
+            pstmt.executeUpdate();
+            pstmt.close();
+            loadStudents();
+            idField.clear();
+            nameField.clear();
+        } catch (SQLException | NumberFormatException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void markAttendance(boolean present) {
+        Student selectedStudent = tableView.getSelectionModel().getSelectedItem();
+        if (selectedStudent == null) {
+            showAlert(Alert.AlertType.WARNING, "No Student Selected", "Please select a student from the list.");
+            return;
+        }
+
+        try {
+            String status = present ? "Present" : "Absent";
+            String date = java.time.LocalDate.now().toString();
+            PreparedStatement pstmt = connection.prepareStatement("INSERT INTO Attendance (id, date, status) VALUES (?, ?, ?) " +
+                    "ON DUPLICATE KEY UPDATE status = ?");
+            pstmt.setInt(1, selectedStudent.getId());
+            pstmt.setString(2, date);
+            pstmt.setString(3, status);
+            pstmt.setString(4, status); // For updating existing entry
+            pstmt.executeUpdate();
+            pstmt.close();
+
+            selectedStudent.setStatus(status);
+            tableView.refresh();
+
+            showAlert(Alert.AlertType.INFORMATION, "Attendance Marked", "Marked as " + status);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void showAlert(Alert.AlertType alertType, String title, String content) {
+        Alert alert = new Alert(alertType);
+        alert.setTitle(title);
+        alert.setContentText(content);
+        alert.showAndWait();
+    }
+
+    private void closeDatabase() {
+        try {
+            if (connection != null && !connection.isClosed()) {
+                connection.close();
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public class Student {
+        private final int id;
+        private final String name;
+        private String status;
+
+        public Student(int id, String name, String status) {
+            this.id = id;
+            this.name = name;
+            this.status = status;
+        }  
+
+        public int getId() {
+            return id;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public String getStatus() {
+            return status;
+        }
+
+        public void setStatus(String status) {
+            this.status = status;
+        }
+    }
+}
